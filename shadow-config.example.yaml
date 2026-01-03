@@ -1,0 +1,236 @@
+# Shadow Worker - Defensive Security Operations Framework
+#
+# IMPORTANT: This is an EXAMPLE configuration.
+# Copy this file to shadow-config.yaml and customize for your environment.
+#
+# Before scanning, you MUST:
+# 1. Add YOUR OWN authorized targets below
+# 2. Set authorization_confirmed to true
+# 3. Configure alerting channels (optional)
+
+name: shadow-worker
+environment: production  # development, staging, production
+
+# REQUIRED: Confirm you are authorized to scan these targets
+authorization_confirmed: false  # Set to true after adding YOUR targets
+
+# =============================================================================
+# TARGET CONFIGURATION
+# Only add targets you OWN or have EXPLICIT WRITTEN PERMISSION to scan
+# =============================================================================
+targets:
+  # IP addresses you own
+  hosts:
+    - "192.168.1.100"
+    - "10.0.0.50"
+
+  # CIDR ranges of your networks
+  networks:
+    - "192.168.1.0/24"
+    - "10.0.0.0/16"
+
+  # Domains you own
+  domains:
+    - "example.com"
+    - "api.example.com"
+
+  # Source code repositories to scan
+  repositories:
+    - "/path/to/your/code"
+
+  # Exclusions
+  exclude_hosts: []
+  exclude_paths:
+    - "**/node_modules/**"
+    - "**/vendor/**"
+    - "**/.git/**"
+    - "**/test/**"
+    - "**/tests/**"
+
+  # Rate limiting (be respectful)
+  max_concurrent_scans: 5
+  requests_per_second: 10.0
+
+# =============================================================================
+# SIEM CONFIGURATION
+# Security Information and Event Management
+# =============================================================================
+siem:
+  enabled: true
+
+  # Log sources to monitor (paths to log files)
+  log_sources:
+    - "/var/log/auth.log"
+    - "/var/log/syslog"
+    - "/var/log/nginx/access.log"
+
+  # Supported formats: json, syslog, cef, leef
+  log_formats:
+    - json
+    - syslog
+    - cef
+
+  # Storage backend
+  storage_backend: sqlite  # sqlite, postgresql, elasticsearch
+  storage_path: ./data/siem.db
+  retention_days: 90
+
+  # Correlation settings
+  correlation_window_seconds: 300
+  alert_threshold: 5
+
+  # External integrations (optional)
+  elasticsearch_url: null
+  splunk_hec_url: null
+  splunk_hec_token: null
+
+# =============================================================================
+# THREAT DETECTION
+# YARA rules and Suricata integration
+# =============================================================================
+detection:
+  enabled: true
+
+  # YARA configuration
+  yara_rules_path: ./rules/yara
+  yara_scan_memory: false
+
+  # Suricata configuration (requires Suricata installed)
+  suricata_enabled: false
+  suricata_rules_path: ./rules/suricata
+  suricata_socket: /var/run/suricata/suricata-command.socket
+
+  # Custom detection rules
+  custom_rules_path: ./rules/custom
+
+  # Minimum severity to report: info, low, medium, high, critical
+  min_severity: low
+
+# =============================================================================
+# STATIC ANALYSIS (SAST)
+# Code security scanning
+# =============================================================================
+sast:
+  enabled: true
+
+  # Semgrep configuration
+  semgrep_enabled: true
+  semgrep_rules:
+    - "p/security-audit"
+    - "p/owasp-top-ten"
+    - "p/secrets"
+
+  # Bandit (Python security)
+  bandit_enabled: true
+
+  # OWASP Noir (API discovery)
+  noir_enabled: true
+  noir_detect_endpoints: true
+
+  # Languages to scan
+  languages:
+    - python
+    - javascript
+    - typescript
+    - go
+    - rust
+    - java
+    - php
+    - ruby
+
+  # Paths to exclude
+  exclude_patterns:
+    - "**/node_modules/**"
+    - "**/vendor/**"
+    - "**/.git/**"
+    - "**/dist/**"
+    - "**/build/**"
+
+# =============================================================================
+# DYNAMIC ANALYSIS (DAST)
+# Runtime security testing
+# =============================================================================
+dast:
+  enabled: true
+
+  # Crawler settings
+  max_depth: 5
+  max_pages: 500
+  follow_redirects: true
+
+  # Authentication (if needed)
+  auth_type: none  # none, basic, bearer, cookie, oauth2
+  auth_credentials: {}
+  # For basic auth:
+  # auth_credentials:
+  #   username: "user"
+  #   password: "pass"
+
+  # Vulnerability checks
+  check_sqli: true
+  check_xss: true
+  check_ssrf: true
+  check_lfi: true
+  check_rfi: true
+  check_command_injection: true
+  check_xxe: true
+  check_cors: true
+  check_headers: true
+  check_ssl: true
+
+# =============================================================================
+# WEB3 SECURITY (Optional)
+# Smart contract analysis
+# =============================================================================
+web3:
+  enabled: false
+
+  # Network RPC endpoints (for reading state only)
+  networks:
+    ethereum: "https://eth.llamarpc.com"
+    polygon: "https://polygon-rpc.com"
+
+  # Analysis tools
+  slither_enabled: true
+  mythril_enabled: true
+
+  # Vulnerability checks
+  check_reentrancy: true
+  check_overflow: true
+  check_access_control: true
+  check_front_running: true
+
+# =============================================================================
+# ALERTING
+# Notification channels for security alerts
+# =============================================================================
+alerting:
+  enabled: true
+
+  # Slack webhook URL
+  slack_webhook: null  # https://hooks.slack.com/services/xxx
+
+  # Discord webhook URL
+  discord_webhook: null  # https://discord.com/api/webhooks/xxx
+
+  # Email configuration
+  email_smtp_host: null
+  email_smtp_port: 587
+  email_from: null
+  email_to: []
+
+  # PagerDuty / OpsGenie for critical alerts
+  pagerduty_key: null
+  opsgenie_key: null
+
+  # Alert thresholds
+  alert_on_severity: medium  # info, low, medium, high, critical
+  aggregate_window_seconds: 60
+  max_alerts_per_hour: 100
+
+# =============================================================================
+# GLOBAL SETTINGS
+# =============================================================================
+data_dir: ./data
+log_level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+workers: 4
