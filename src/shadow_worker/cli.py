@@ -21,6 +21,14 @@ from shadow_worker import __version__
 from shadow_worker.core.config import ShadowConfig
 from shadow_worker.core.engine import ShadowEngine
 from shadow_worker.core.scanner import Severity
+from shadow_worker.fuzzing import (
+    FuzzEngine,
+    FuzzConfig,
+    HTTPFuzzer,
+    GraphQLFuzzer,
+    RESTFuzzer,
+    FuzzStrategy,
+)
 
 console = Console()
 
@@ -486,6 +494,541 @@ def _to_sarif(result: Any) -> dict[str, Any]:
             }
         ]
     }
+
+
+# ============================================================================
+# Fuzzing Commands
+# ============================================================================
+
+@main.group()
+def fuzz() -> None:
+    """
+    Advanced security fuzzing operations.
+
+    Comprehensive fuzzing framework for vulnerability discovery across
+    all platforms, protocols, and input formats.
+    """
+    pass
+
+
+@fuzz.command("http")
+@click.argument("target")
+@click.option("--method", "-m", type=click.Choice(["GET", "POST", "PUT", "DELETE", "PATCH"]),
+              default="GET", help="HTTP method")
+@click.option("--wordlist", "-w", type=click.Path(exists=True), help="Custom wordlist")
+@click.option("--headers", "-H", multiple=True, help="Custom headers (key:value)")
+@click.option("--iterations", "-i", type=int, default=10000, help="Max iterations")
+@click.option("--timeout", "-t", type=int, default=5000, help="Request timeout (ms)")
+@click.option("--output", "-o", type=click.Path(), help="Output file for results")
+@click.option("--waf-bypass", is_flag=True, help="Enable WAF bypass techniques")
+@click.pass_context
+@async_command
+async def fuzz_http(
+    ctx: click.Context,
+    target: str,
+    method: str,
+    wordlist: str | None,
+    headers: tuple[str, ...],
+    iterations: int,
+    timeout: int,
+    output: str | None,
+    waf_bypass: bool
+) -> None:
+    """
+    Fuzz HTTP endpoints for vulnerabilities.
+
+    TARGET should be a URL with optional FUZZ markers.
+
+    Examples:
+      shadow fuzz http https://api.example.com/users/FUZZ
+      shadow fuzz http https://api.example.com/search?q=FUZZ --method POST
+      shadow fuzz http https://example.com/api/FUZZ --waf-bypass
+    """
+    config = ctx.obj["config"]
+
+    if not config.authorization_confirmed:
+        console.print("[red]Error: Authorization not confirmed.[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]HTTP Fuzzing[/bold]\n"
+        f"Target: {target}\n"
+        f"Method: {method}\n"
+        f"Iterations: {iterations}",
+        border_style="blue"
+    ))
+
+    # Parse custom headers
+    custom_headers = {}
+    for h in headers:
+        if ":" in h:
+            key, value = h.split(":", 1)
+            custom_headers[key.strip()] = value.strip()
+
+    fuzzer = HTTPFuzzer(
+        base_url=target.rsplit("/", 1)[0] if "/" in target else target,
+        timeout=timeout / 1000
+    )
+
+    # Load wordlist if provided
+    payloads = None
+    if wordlist:
+        with open(wordlist) as f:
+            payloads = [line.strip() for line in f if line.strip()]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Fuzzing...", total=None)
+
+        results = await fuzzer.fuzz_endpoint(
+            path=target.split("/")[-1] if "/" in target else "/",
+            method=method,
+            payloads=payloads,
+            headers=custom_headers,
+        )
+
+        progress.update(task, description="Complete!")
+
+    # Display results
+    table = Table(title="Fuzzing Results")
+    table.add_column("Type", style="cyan")
+    table.add_column("Payload", style="yellow")
+    table.add_column("Status", style="green")
+    table.add_column("Evidence", style="red")
+
+    finding_count = 0
+    for finding in results:
+        table.add_row(
+            finding.get("type", "unknown"),
+            finding.get("payload", "")[:50],
+            str(finding.get("status_code", "")),
+            finding.get("evidence", "")[:40]
+        )
+        finding_count += 1
+
+    console.print(table)
+
+    if output:
+        Path(output).write_text(json.dumps(results, indent=2))
+        console.print(f"[green]Results saved to {output}[/green]")
+
+    console.print(Panel(
+        f"[bold]Fuzzing Complete[/bold]\n"
+        f"Total Findings: {finding_count}",
+        border_style="green" if finding_count == 0 else "yellow"
+    ))
+
+
+@fuzz.command("graphql")
+@click.argument("endpoint")
+@click.option("--iterations", "-i", type=int, default=5000, help="Max iterations")
+@click.option("--introspect/--no-introspect", default=True, help="Run introspection")
+@click.option("--dos-test", is_flag=True, help="Test for DoS vulnerabilities")
+@click.option("--output", "-o", type=click.Path(), help="Output file")
+@click.pass_context
+@async_command
+async def fuzz_graphql(
+    ctx: click.Context,
+    endpoint: str,
+    iterations: int,
+    introspect: bool,
+    dos_test: bool,
+    output: str | None
+) -> None:
+    """
+    Fuzz GraphQL endpoints for vulnerabilities.
+
+    Examples:
+      shadow fuzz graphql https://api.example.com/graphql
+      shadow fuzz graphql https://api.example.com/graphql --dos-test
+    """
+    config = ctx.obj["config"]
+
+    if not config.authorization_confirmed:
+        console.print("[red]Error: Authorization not confirmed.[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]GraphQL Fuzzing[/bold]\n"
+        f"Endpoint: {endpoint}\n"
+        f"Introspection: {introspect}",
+        border_style="blue"
+    ))
+
+    fuzzer = GraphQLFuzzer(endpoint=endpoint)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        results = []
+
+        if introspect:
+            task = progress.add_task("Running introspection...", total=None)
+            intro_result = await fuzzer.introspect()
+            if intro_result:
+                results.append({"type": "introspection", "data": intro_result})
+            progress.update(task, description="Introspection complete")
+
+        task = progress.add_task("Fuzzing queries...", total=None)
+        query_results = await fuzzer.fuzz_queries()
+        results.extend(query_results)
+        progress.update(task, description="Query fuzzing complete")
+
+        if dos_test:
+            task = progress.add_task("Testing DoS vectors...", total=None)
+            dos_results = await fuzzer.test_dos()
+            results.extend(dos_results)
+            progress.update(task, description="DoS testing complete")
+
+    # Display results
+    table = Table(title="GraphQL Fuzzing Results")
+    table.add_column("Type", style="cyan")
+    table.add_column("Query", style="yellow")
+    table.add_column("Vulnerability", style="red")
+
+    for finding in results:
+        if isinstance(finding, dict) and finding.get("type") != "introspection":
+            table.add_row(
+                finding.get("type", "unknown"),
+                finding.get("query", "")[:60],
+                finding.get("vulnerability", finding.get("evidence", ""))[:40]
+            )
+
+    console.print(table)
+
+    if output:
+        Path(output).write_text(json.dumps(results, indent=2, default=str))
+        console.print(f"[green]Results saved to {output}[/green]")
+
+
+@fuzz.command("api")
+@click.argument("spec_file", type=click.Path(exists=True))
+@click.option("--base-url", "-u", required=True, help="Base URL for API")
+@click.option("--iterations", "-i", type=int, default=10000, help="Max iterations")
+@click.option("--auth-header", "-a", help="Authorization header value")
+@click.option("--idor-test", is_flag=True, help="Test for IDOR vulnerabilities")
+@click.option("--output", "-o", type=click.Path(), help="Output file")
+@click.pass_context
+@async_command
+async def fuzz_api(
+    ctx: click.Context,
+    spec_file: str,
+    base_url: str,
+    iterations: int,
+    auth_header: str | None,
+    idor_test: bool,
+    output: str | None
+) -> None:
+    """
+    Fuzz REST API using OpenAPI/Swagger specification.
+
+    Examples:
+      shadow fuzz api ./openapi.json --base-url https://api.example.com
+      shadow fuzz api ./swagger.yaml -u https://api.example.com --idor-test
+    """
+    config = ctx.obj["config"]
+
+    if not config.authorization_confirmed:
+        console.print("[red]Error: Authorization not confirmed.[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]REST API Fuzzing[/bold]\n"
+        f"Spec: {spec_file}\n"
+        f"Base URL: {base_url}",
+        border_style="blue"
+    ))
+
+    fuzzer = RESTFuzzer(base_url=base_url)
+
+    # Load OpenAPI spec
+    with open(spec_file) as f:
+        if spec_file.endswith(".yaml") or spec_file.endswith(".yml"):
+            import yaml
+            spec = yaml.safe_load(f)
+        else:
+            spec = json.load(f)
+
+    fuzzer.load_openapi_spec(spec)
+
+    headers = {}
+    if auth_header:
+        headers["Authorization"] = auth_header
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        results = []
+
+        task = progress.add_task("Fuzzing API endpoints...", total=None)
+        api_results = await fuzzer.fuzz_all_endpoints(headers=headers)
+        results.extend(api_results)
+        progress.update(task, description="Endpoint fuzzing complete")
+
+        if idor_test:
+            task = progress.add_task("Testing for IDOR...", total=None)
+            idor_results = await fuzzer.test_idor(headers=headers)
+            results.extend(idor_results)
+            progress.update(task, description="IDOR testing complete")
+
+    # Display results
+    table = Table(title="API Fuzzing Results")
+    table.add_column("Endpoint", style="cyan")
+    table.add_column("Method", style="yellow")
+    table.add_column("Vulnerability", style="red")
+    table.add_column("Severity", style="magenta")
+
+    for finding in results:
+        table.add_row(
+            finding.get("endpoint", "")[:40],
+            finding.get("method", ""),
+            finding.get("vulnerability", "")[:30],
+            finding.get("severity", "medium")
+        )
+
+    console.print(table)
+
+    if output:
+        Path(output).write_text(json.dumps(results, indent=2, default=str))
+        console.print(f"[green]Results saved to {output}[/green]")
+
+
+@fuzz.command("target")
+@click.argument("target_func")
+@click.option("--strategy", "-s",
+              type=click.Choice(["random", "mutation", "coverage", "evolutionary", "smart", "hybrid"]),
+              default="hybrid", help="Fuzzing strategy")
+@click.option("--corpus", "-c", type=click.Path(), help="Corpus directory")
+@click.option("--crashes", type=click.Path(), default="./crashes", help="Crashes output directory")
+@click.option("--iterations", "-i", type=int, default=100000, help="Max iterations")
+@click.option("--timeout", "-t", type=int, default=5000, help="Input timeout (ms)")
+@click.option("--workers", "-w", type=int, default=4, help="Parallel workers")
+@click.option("--output", "-o", type=click.Path(), help="Output file for results")
+@click.pass_context
+@async_command
+async def fuzz_target(
+    ctx: click.Context,
+    target_func: str,
+    strategy: str,
+    corpus: str | None,
+    crashes: str,
+    iterations: int,
+    timeout: int,
+    workers: int,
+    output: str | None
+) -> None:
+    """
+    Fuzz a Python function or module.
+
+    TARGET_FUNC should be a module:function path.
+
+    Examples:
+      shadow fuzz target mymodule:parse_data --strategy coverage
+      shadow fuzz target mylib.parser:deserialize --corpus ./seeds
+    """
+    config = ctx.obj["config"]
+
+    if not config.authorization_confirmed:
+        console.print("[red]Error: Authorization not confirmed.[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]Target Fuzzing[/bold]\n"
+        f"Target: {target_func}\n"
+        f"Strategy: {strategy}\n"
+        f"Iterations: {iterations}",
+        border_style="blue"
+    ))
+
+    # Import target function
+    try:
+        module_path, func_name = target_func.rsplit(":", 1)
+        import importlib
+        module = importlib.import_module(module_path)
+        target = getattr(module, func_name)
+    except Exception as e:
+        console.print(f"[red]Error loading target: {e}[/red]")
+        sys.exit(1)
+
+    strategy_map = {
+        "random": FuzzStrategy.RANDOM,
+        "mutation": FuzzStrategy.MUTATION,
+        "coverage": FuzzStrategy.COVERAGE,
+        "evolutionary": FuzzStrategy.EVOLUTIONARY,
+        "smart": FuzzStrategy.SMART,
+        "hybrid": FuzzStrategy.HYBRID,
+    }
+
+    fuzz_config = FuzzConfig(
+        strategy=strategy_map[strategy],
+        max_iterations=iterations,
+        input_timeout_ms=timeout,
+        parallel_workers=workers,
+        crashes_dir=crashes,
+        corpus_dir=corpus or "./corpus",
+    )
+
+    engine = FuzzEngine(config=fuzz_config)
+
+    # Load corpus if provided
+    initial_corpus = None
+    if corpus and Path(corpus).exists():
+        initial_corpus = []
+        for f in Path(corpus).glob("*"):
+            if f.is_file():
+                initial_corpus.append(f.read_bytes())
+        console.print(f"[dim]Loaded {len(initial_corpus)} corpus files[/dim]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Fuzzing...", total=None)
+
+        result = await engine.fuzz(
+            target=target,
+            initial_corpus=initial_corpus
+        )
+
+        progress.update(task, description="Complete!")
+
+    # Display results
+    console.print("\n[bold]Fuzzing Results:[/bold]")
+    console.print(f"  Total Iterations: {result.total_iterations}")
+    console.print(f"  Executions/sec: {result.executions_per_second:.1f}")
+    console.print(f"  Total Crashes: {result.total_crashes}")
+    console.print(f"  Unique Crashes: {result.unique_crashes}")
+    console.print(f"  Coverage Increase: {result.total_coverage_increase}")
+
+    if result.crashes:
+        console.print("\n[bold red]Crashes Found:[/bold red]")
+        table = Table()
+        table.add_column("Hash", style="cyan")
+        table.add_column("Type", style="yellow")
+        table.add_column("Size", style="green")
+
+        for crash in result.crashes[:20]:
+            table.add_row(
+                crash.hash[:12],
+                crash.crash_type,
+                str(len(crash.data))
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]Crash files saved to: {crashes}[/dim]")
+
+    if result.vulnerabilities:
+        console.print("\n[bold red]Vulnerabilities:[/bold red]")
+        for vuln in result.vulnerabilities:
+            severity_color = {
+                "critical": "red bold",
+                "high": "red",
+                "medium": "yellow",
+                "low": "blue",
+            }.get(vuln.get("severity", "medium"), "white")
+            console.print(
+                f"  [{severity_color}]{vuln.get('severity', 'medium').upper()}[/{severity_color}] "
+                f"{vuln.get('type', 'unknown')}"
+            )
+
+    if output:
+        Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+@fuzz.command("network")
+@click.argument("host")
+@click.argument("port", type=int)
+@click.option("--protocol", "-p", type=click.Choice(["tcp", "udp"]), default="tcp")
+@click.option("--seed-file", "-s", type=click.Path(exists=True), help="Seed messages file")
+@click.option("--iterations", "-i", type=int, default=10000, help="Max iterations")
+@click.option("--output", "-o", type=click.Path(), help="Output file")
+@click.pass_context
+@async_command
+async def fuzz_network(
+    ctx: click.Context,
+    host: str,
+    port: int,
+    protocol: str,
+    seed_file: str | None,
+    iterations: int,
+    output: str | None
+) -> None:
+    """
+    Fuzz network protocols (AFL-Net style).
+
+    Examples:
+      shadow fuzz network localhost 8080 --protocol tcp
+      shadow fuzz network 192.168.1.100 21 --seed-file ftp_seeds.txt
+    """
+    from shadow_worker.fuzzing import AFLNetFuzzer
+
+    config = ctx.obj["config"]
+
+    if not config.authorization_confirmed:
+        console.print("[red]Error: Authorization not confirmed.[/red]")
+        sys.exit(1)
+
+    console.print(Panel.fit(
+        f"[bold]Network Protocol Fuzzing[/bold]\n"
+        f"Target: {host}:{port}\n"
+        f"Protocol: {protocol}",
+        border_style="blue"
+    ))
+
+    fuzzer = AFLNetFuzzer(
+        host=host,
+        port=port,
+        protocol=protocol
+    )
+
+    # Load seed messages
+    seed_sequences = None
+    if seed_file:
+        with open(seed_file) as f:
+            seeds = [line.strip().encode() for line in f if line.strip()]
+            seed_sequences = [[s] for s in seeds]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Fuzzing network protocol...", total=None)
+
+        findings = await fuzzer.fuzz(
+            seed_sequences=seed_sequences,
+            max_iterations=iterations
+        )
+
+        progress.update(task, description="Complete!")
+
+    console.print(f"\n[bold]Findings: {len(findings)}[/bold]")
+
+    if findings:
+        table = Table(title="Network Fuzzing Findings")
+        table.add_column("Type", style="cyan")
+        table.add_column("Sequence Length", style="yellow")
+
+        for finding in findings:
+            table.add_row(
+                finding.get("type", "unknown"),
+                str(len(finding.get("sequence", [])))
+            )
+
+        console.print(table)
+
+    if output:
+        Path(output).write_text(json.dumps(findings, indent=2, default=str))
+        console.print(f"[green]Results saved to {output}[/green]")
 
 
 if __name__ == "__main__":
