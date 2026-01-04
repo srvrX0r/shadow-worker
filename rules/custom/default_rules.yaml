@@ -1,0 +1,193 @@
+# Shadow Worker Custom Detection Rules
+# YAML format for defining threat detection patterns
+
+rules:
+  # Cryptocurrency Mining Detection
+  - id: crypto_wallet_address
+    name: "Cryptocurrency Wallet Address"
+    description: "Detects cryptocurrency wallet addresses that may indicate mining or theft"
+    severity: medium
+    confidence: 0.7
+    threat_type: cryptominer
+    patterns:
+      - type: regex
+        value: "[13][a-km-zA-HJ-NP-Z1-9]{25,34}"  # Bitcoin
+      - type: regex
+        value: "0x[a-fA-F0-9]{40}"  # Ethereum
+      - type: regex
+        value: "4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}"  # Monero
+    tags:
+      - cryptocurrency
+      - mining
+    mitre_attack:
+      - T1496
+
+  # Webshell Detection
+  - id: php_webshell
+    name: "PHP Webshell Indicators"
+    description: "Detects common PHP webshell patterns"
+    severity: critical
+    confidence: 0.9
+    threat_type: webshell
+    patterns:
+      - type: string
+        value: "eval($_POST"
+      - type: string
+        value: "eval($_GET"
+      - type: string
+        value: "eval($_REQUEST"
+      - type: string
+        value: "base64_decode($_"
+      - type: string
+        value: "system($_"
+      - type: string
+        value: "passthru($_"
+      - type: regex
+        value: "\\$_(?:GET|POST|REQUEST)\\s*\\[.*\\]\\s*\\("
+    tags:
+      - webshell
+      - php
+    mitre_attack:
+      - T1505.003
+
+  # Suspicious PowerShell
+  - id: suspicious_powershell
+    name: "Suspicious PowerShell Commands"
+    description: "Detects potentially malicious PowerShell patterns"
+    severity: high
+    confidence: 0.8
+    threat_type: suspicious
+    patterns:
+      - type: string
+        value: "-EncodedCommand"
+      - type: string
+        value: "-ExecutionPolicy Bypass"
+      - type: string
+        value: "IEX(New-Object"
+      - type: string
+        value: "Invoke-Expression"
+      - type: string
+        value: "DownloadString("
+      - type: regex
+        value: "(?i)powershell.*-(?:e|enc|encoded)"
+    tags:
+      - powershell
+      - windows
+    mitre_attack:
+      - T1059.001
+
+  # Credential Theft Indicators
+  - id: credential_theft
+    name: "Credential Theft Indicators"
+    description: "Patterns associated with credential harvesting"
+    severity: critical
+    confidence: 0.85
+    threat_type: trojan
+    patterns:
+      - type: string
+        value: "mimikatz"
+      - type: string
+        value: "sekurlsa::"
+      - type: string
+        value: "lsadump::"
+      - type: string
+        value: "SAM database"
+      - type: regex
+        value: "(?i)password.*dump"
+    tags:
+      - credentials
+      - mimikatz
+    mitre_attack:
+      - T1003
+
+  # Reverse Shell Detection
+  - id: reverse_shell
+    name: "Reverse Shell Patterns"
+    description: "Detects common reverse shell commands"
+    severity: critical
+    confidence: 0.9
+    threat_type: backdoor
+    patterns:
+      - type: regex
+        value: "bash\\s+-i\\s+>&\\s*/dev/tcp/"
+      - type: regex
+        value: "nc\\s+-e\\s+/bin/(?:ba)?sh"
+      - type: regex
+        value: "python.*socket.*connect.*subprocess"
+      - type: regex
+        value: "perl.*socket.*STDIN.*exec"
+      - type: string
+        value: "msfvenom"
+      - type: string
+        value: "meterpreter"
+    tags:
+      - reverse_shell
+      - backdoor
+    mitre_attack:
+      - T1059
+      - T1071
+
+  # Data Exfiltration Indicators
+  - id: data_exfil
+    name: "Data Exfiltration Patterns"
+    description: "Patterns that may indicate data theft"
+    severity: high
+    confidence: 0.7
+    threat_type: suspicious
+    patterns:
+      - type: regex
+        value: "curl.*-X\\s*POST.*-d.*@"
+      - type: regex
+        value: "wget.*--post-file"
+      - type: string
+        value: "rclone copy"
+      - type: regex
+        value: "tar.*\\|.*curl"
+    tags:
+      - exfiltration
+    mitre_attack:
+      - T1041
+
+  # Ransomware Indicators
+  - id: ransomware_note
+    name: "Ransomware Note Indicators"
+    description: "Common ransomware ransom note patterns"
+    severity: critical
+    confidence: 0.95
+    threat_type: ransomware
+    patterns:
+      - type: regex
+        value: "(?i)your files have been encrypted"
+      - type: regex
+        value: "(?i)send.*bitcoin.*to.*address"
+      - type: regex
+        value: "(?i)decrypt.*files.*pay"
+      - type: string
+        value: ".onion"
+      - type: regex
+        value: "(?i)all your files are encrypted"
+    tags:
+      - ransomware
+    mitre_attack:
+      - T1486
+
+  # Suspicious Script Downloads
+  - id: script_download
+    name: "Suspicious Script Download"
+    description: "Downloading and executing remote scripts"
+    severity: high
+    confidence: 0.75
+    threat_type: suspicious
+    patterns:
+      - type: regex
+        value: "curl.*\\|.*(?:bash|sh|python|perl)"
+      - type: regex
+        value: "wget.*-O.*-.*\\|.*sh"
+      - type: regex
+        value: "(?i)invoke-webrequest.*iex"
+    tags:
+      - download
+      - execution
+    mitre_attack:
+      - T1105
+      - T1059
