@@ -474,11 +474,11 @@ class CoverageReport:
 <head>
     <title>Coverage Report</title>
     <style>
-        body { font-family: monospace; margin: 20px; }
-        .covered { background-color: #90EE90; }
-        .uncovered { background-color: #FFB6C1; }
-        .stats { margin-bottom: 20px; }
-        .file { margin: 20px 0; border: 1px solid #ccc; padding: 10px; }
+        body {{ font-family: monospace; margin: 20px; }}
+        .covered {{ background-color: #90EE90; }}
+        .uncovered {{ background-color: #FFB6C1; }}
+        .stats {{ margin-bottom: 20px; }}
+        .file {{ margin: 20px 0; border: 1px solid #ccc; padding: 10px; }}
     </style>
 </head>
 <body>

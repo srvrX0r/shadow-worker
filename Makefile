@@ -1,7 +1,7 @@
 # Shadow Worker - Makefile
 # Defensive Security Operations Framework
 
-.PHONY: help install dev test lint format clean run scan
+.PHONY: help install dev test lint format clean run scan ci docker-build
 
 # Default target
 help:
@@ -16,8 +16,8 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  test         Run tests"
-	@echo "  lint         Run linter"
-	@echo "  format       Format code"
+	@echo "  lint         Run ruff"
+	@echo "  ci           Lint and test (same gates as GitHub Actions)"
 	@echo "  typecheck    Run type checker"
 	@echo ""
 	@echo "Usage:"
@@ -54,14 +54,15 @@ rules:
 
 # Development targets
 test:
-	pytest tests/ -v --cov=shadow_worker
+	pytest
 
 lint:
-	ruff check src/
+	ruff check src tests
+
+ci: lint test
 
 format:
-	black src/
-	ruff check --fix src/
+	ruff check --fix src tests
 
 typecheck:
 	mypy src/shadow_worker
@@ -92,12 +93,12 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 
-# Docker targets (future)
+# Container
 docker-build:
-	docker build -t shadow-worker:latest .
+	docker build -t shadow-worker:1.1.0 .
 
 docker-run:
-	docker run -it --rm -v $(PWD)/shadow-config.yaml:/config/shadow-config.yaml shadow-worker:latest
+	docker run --rm shadow-worker:1.1.0 --help
 
 # Documentation
 docs:

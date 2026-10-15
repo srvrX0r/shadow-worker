@@ -1,20 +1,16 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+| Version | Supported |
+| ------- | --------- |
+| 1.1.x   | Yes       |
+| 1.0.x   | No        |
 
-| Version | Supported          |
-| ------- | ------------------ |
-| >5.1.x  | ✅                 |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+## Reporting a vulnerability
 
-## Reporting a Vulnerability
+Report security issues privately to the maintainer, [@srvrX0r](https://github.com/srvrX0r). Do not open a public issue for an unpatched vulnerability.
 
-Please report any vulnerabilities found to @srvrX0r
+Include the affected version, a minimal reproduction, and the impact. You will get an acknowledgement, and a fix will ship in a tagged release when one is available.
 
-2026 srvrX0r All Rights Reserved
+Shadow Worker is an authorized-testing tool. Only scan systems you own or have written permission to test.

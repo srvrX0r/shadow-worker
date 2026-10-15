@@ -15,7 +15,7 @@ Complete installation instructions for Shadow Worker.
 
 ```bash
 # Install from source
-git clone https://github.com/shadow-worker/shadow-worker.git
+git clone https://github.com/srvrX0r/shadow-worker.git
 cd shadow-worker
 pip install -e .
 ```
@@ -24,7 +24,7 @@ pip install -e .
 
 ```bash
 # Clone repository
-git clone https://github.com/shadow-worker/shadow-worker.git
+git clone https://github.com/srvrX0r/shadow-worker.git
 cd shadow-worker
 
 # Create and activate virtual environment

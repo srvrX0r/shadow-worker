@@ -1,50 +1,49 @@
-# Shadow Worker - Docker Image
-# Defensive Security Operations Framework
+# syntax=docker/dockerfile:1
 
-FROM python:3.11-slim
+FROM python:3.12-slim AS builder
 
-LABEL maintainer="Shadow Worker Team"
-LABEL description="Defensive Security Operations Framework"
-LABEL version="1.0.0"
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    nmap \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user
-RUN useradd -m -s /bin/bash shadow
-
-# Set working directory
-WORKDIR /app
-
-# Copy project files
+WORKDIR /src
 COPY pyproject.toml README.md LICENSE ./
-COPY src/ ./src/
-COPY rules/ ./rules/
+COPY src ./src
+RUN pip install --upgrade pip \
+    && pip wheel --wheel-dir /wheels .
 
-# Install Shadow Worker
-RUN pip install --no-cache-dir -e .
+FROM python:3.12-slim AS runtime
 
-# Install additional security tools
-RUN pip install --no-cache-dir semgrep bandit yara-python
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    SHADOW_CONFIG=/config/shadow-config.yaml \
+    SHADOW_DATA_DIR=/var/lib/shadow-worker
 
-# Create data directory
-RUN mkdir -p /app/data /config && chown -R shadow:shadow /app /config
+LABEL org.opencontainers.image.title="shadow-worker" \
+      org.opencontainers.image.description="Defensive security operations framework" \
+      org.opencontainers.image.source="https://github.com/srvrX0r/shadow-worker" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.version="1.1.0"
 
-# Switch to non-root user
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --shell /usr/sbin/nologin --uid 10001 shadow \
+    && mkdir -p /var/lib/shadow-worker /config
+
+COPY --from=builder /wheels /wheels
+RUN pip install --upgrade pip \
+    && pip install /wheels/*.whl \
+    && rm -rf /wheels
+
+COPY --chown=shadow:shadow rules /var/lib/shadow-worker/rules
+
+WORKDIR /var/lib/shadow-worker
+RUN chown -R shadow:shadow /var/lib/shadow-worker /config
+
 USER shadow
 
-# Set environment variables
-ENV SHADOW_CONFIG=/config/shadow-config.yaml
-ENV SHADOW_DATA_DIR=/app/data
-
-# Default command
 ENTRYPOINT ["shadow"]
 CMD ["--help"]
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD shadow status || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD shadow --help >/dev/null || exit 1
