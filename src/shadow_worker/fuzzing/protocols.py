@@ -104,7 +104,11 @@ class ProtocolFuzzer(ABC):
                 b"/home/", b"/var/", b"root:", b"password"
             ],
             VulnType.XXE: [
-                b"root:x:", b"ENTITY", b"DOCTYPE"
+                # Only leaked file contents prove an external entity was
+                # resolved. ``DOCTYPE``/``ENTITY`` are rejected as signals:
+                # every HTML response contains ``<!DOCTYPE html>``, so matching
+                # them flags benign pages as critical XXE.
+                b"root:x:", b"[fonts]", b"[extensions]"
             ],
             VulnType.SSRF: [
                 b"localhost", b"127.0.0.1", b"169.254", b"metadata"
@@ -196,6 +200,9 @@ class HTTPFuzzer(ProtocolFuzzer):
         fuzz_headers: bool = True,
         fuzz_body: bool = True,
         fuzz_paths: bool = True,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        waf_bypass: bool = True,
         **kwargs
     ) -> ProtocolFuzzResult:
         """
@@ -209,6 +216,9 @@ class HTTPFuzzer(ProtocolFuzzer):
             fuzz_headers: Fuzz HTTP headers
             fuzz_body: Fuzz request body
             fuzz_paths: Fuzz URL paths
+            method: HTTP method used for parameter/header/path fuzzing
+            headers: Extra headers applied to every request
+            waf_bypass: Randomly apply WAF bypass encodings
         """
         result = ProtocolFuzzResult(target=target, protocol=self.protocol)
         result.start_time = datetime.utcnow()
@@ -222,7 +232,10 @@ class HTTPFuzzer(ProtocolFuzzer):
             follow_redirects=False
         ) as client:
 
-            while (time.time() - start_time) < duration_seconds:
+            while (
+                (time.time() - start_time) < duration_seconds
+                and result.requests_sent < self.config.max_iterations
+            ):
                 endpoint = random.choice(endpoints)
                 url = urllib.parse.urljoin(target, endpoint)
 
@@ -243,7 +256,10 @@ class HTTPFuzzer(ProtocolFuzzer):
                 strategy = random.choice(strategies)
 
                 try:
-                    vuln = await strategy(client, url, result)
+                    vuln = await strategy(
+                        client, url, result,
+                        method=method, headers=headers, waf_bypass=waf_bypass,
+                    )
                     if vuln:
                         result.vulnerabilities.append(vuln)
 
@@ -271,22 +287,25 @@ class HTTPFuzzer(ProtocolFuzzer):
         self,
         client: httpx.AsyncClient,
         url: str,
-        result: ProtocolFuzzResult
+        result: ProtocolFuzzResult,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        waf_bypass: bool = True,
     ) -> dict[str, Any] | None:
         """Fuzz query parameters."""
         attack = random.choice(ATTACK_STRINGS)
         params = {"fuzz": attack.decode(errors="ignore")}
 
         # Add WAF bypass
-        if random.random() < 0.3:
+        if waf_bypass and random.random() < 0.3:
             bypass = random.choice(self.WAF_BYPASS)
             params["fuzz"] = bypass(params["fuzz"])
 
         start = time.time()
-        response = await client.get(url, params=params)
+        response = await client.request(method, url, params=params, headers=headers)
         elapsed = (time.time() - start) * 1000
 
-        request_bytes = f"GET {url}?fuzz={params['fuzz']}".encode()
+        request_bytes = f"{method} {url}?fuzz={params['fuzz']}".encode()
         response_bytes = response.content
 
         return self._check_for_vulnerability(
@@ -297,29 +316,33 @@ class HTTPFuzzer(ProtocolFuzzer):
         self,
         client: httpx.AsyncClient,
         url: str,
-        result: ProtocolFuzzResult
+        result: ProtocolFuzzResult,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        waf_bypass: bool = True,
     ) -> dict[str, Any] | None:
         """Fuzz HTTP headers."""
         header_name = random.choice(self.FUZZ_HEADERS)
         attack = random.choice(ATTACK_STRINGS).decode(errors="ignore")
 
-        headers = {header_name: attack}
+        request_headers = dict(headers or {})
+        request_headers[header_name] = attack
 
         # Special header attacks
         if header_name == "Host":
-            headers["Host"] = random.choice([
+            request_headers["Host"] = random.choice([
                 "localhost", "127.0.0.1", "evil.com", "[::1]"
             ])
         elif header_name == "X-Forwarded-For":
-            headers["X-Forwarded-For"] = "127.0.0.1"
+            request_headers["X-Forwarded-For"] = "127.0.0.1"
         elif header_name == "Content-Length":
-            headers["Content-Length"] = str(random.choice([-1, 0, 999999999]))
+            request_headers["Content-Length"] = str(random.choice([-1, 0, 999999999]))
 
         start = time.time()
-        response = await client.get(url, headers=headers)
+        response = await client.request(method, url, headers=request_headers)
         elapsed = (time.time() - start) * 1000
 
-        request_bytes = f"GET {url}\n{header_name}: {attack}".encode()
+        request_bytes = f"{method} {url}\n{header_name}: {attack}".encode()
         return self._check_for_vulnerability(
             request_bytes, response.content, response.status_code, elapsed
         )
@@ -328,7 +351,10 @@ class HTTPFuzzer(ProtocolFuzzer):
         self,
         client: httpx.AsyncClient,
         url: str,
-        result: ProtocolFuzzResult
+        result: ProtocolFuzzResult,
+        method: str = "POST",
+        headers: dict[str, str] | None = None,
+        waf_bypass: bool = True,
     ) -> dict[str, Any] | None:
         """Fuzz request body."""
         content_types = [
@@ -341,10 +367,13 @@ class HTTPFuzzer(ProtocolFuzzer):
         content_type, generator = random.choice(content_types)
         body = generator()
 
-        headers = {"Content-Type": content_type}
+        request_headers = dict(headers or {})
+        request_headers["Content-Type"] = content_type
 
         start = time.time()
-        response = await client.post(url, content=body, headers=headers)
+        response = await client.request(
+            method, url, content=body, headers=request_headers
+        )
         elapsed = (time.time() - start) * 1000
 
         return self._check_for_vulnerability(
@@ -355,7 +384,10 @@ class HTTPFuzzer(ProtocolFuzzer):
         self,
         client: httpx.AsyncClient,
         url: str,
-        result: ProtocolFuzzResult
+        result: ProtocolFuzzResult,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        waf_bypass: bool = True,
     ) -> dict[str, Any] | None:
         """Fuzz URL path."""
         path_attacks = [
@@ -377,7 +409,7 @@ class HTTPFuzzer(ProtocolFuzzer):
         fuzz_url = urllib.parse.urljoin(url, path)
 
         start = time.time()
-        response = await client.get(fuzz_url)
+        response = await client.request(method, fuzz_url, headers=headers)
         elapsed = (time.time() - start) * 1000
 
         # Check for sensitive file exposure
@@ -575,9 +607,20 @@ class GraphQLFuzzer(ProtocolFuzzer):
         duration_seconds: int = 60,
         known_types: list[str] | None = None,
         known_fields: list[str] | None = None,
+        introspect: bool = True,
+        test_dos: bool = True,
         **kwargs
     ) -> ProtocolFuzzResult:
-        """Fuzz GraphQL endpoint."""
+        """Fuzz GraphQL endpoint.
+
+        Args:
+            target: GraphQL endpoint URL
+            duration_seconds: Fuzzing duration
+            known_types: Known type names to bias query generation
+            known_fields: Known field names to bias query generation
+            introspect: Attempt schema introspection first
+            test_dos: Include expensive/DoS query templates
+        """
         result = ProtocolFuzzResult(target=target, protocol=self.protocol)
         result.start_time = datetime.utcnow()
 
@@ -589,16 +632,22 @@ class GraphQLFuzzer(ProtocolFuzzer):
         ) as client:
 
             # First, try introspection
-            schema_info = await self._try_introspection(client, target)
-            if schema_info:
-                result.anomalies.append({
-                    "type": "introspection_enabled",
-                    "severity": "medium",
-                    "data": schema_info
-                })
+            if introspect:
+                schema_info = await self._try_introspection(client, target)
+                if schema_info:
+                    result.anomalies.append({
+                        "type": "introspection_enabled",
+                        "severity": "medium",
+                        "data": schema_info
+                    })
 
-            while (time.time() - start_time) < duration_seconds:
-                query = self._generate_query(known_types, known_fields)
+            while (
+                (time.time() - start_time) < duration_seconds
+                and result.requests_sent < self.config.max_iterations
+            ):
+                query = self._generate_query(
+                    known_types, known_fields, include_dos=test_dos
+                )
 
                 try:
                     start = time.time()
@@ -654,7 +703,8 @@ class GraphQLFuzzer(ProtocolFuzzer):
     def _generate_query(
         self,
         known_types: list[str] | None,
-        known_fields: list[str] | None
+        known_fields: list[str] | None,
+        include_dos: bool = True
     ) -> str:
         """Generate fuzzed GraphQL query."""
         attack = random.choice(ATTACK_STRINGS).decode(errors="ignore")
@@ -665,24 +715,27 @@ class GraphQLFuzzer(ProtocolFuzzer):
             f'{{ users(filter: "{attack}") {{ id }} }}',
             f'{{ search(query: "{attack}") {{ results }} }}',
 
-            # Nested query DoS
-            '{ users { friends { friends { friends { id } } } } }',
-
-            # Alias-based DoS
-            ' '.join([f'a{i}: user(id: {i}) {{ id }}' for i in range(100)]),
-
             # Directive injection
             f'{{ user @include(if: {attack}) {{ id }} }}',
 
             # Fragment injection
             f'{{ ...on User {{ id name {attack} }} }}',
-
-            # Batch queries
-            '[' + ','.join([
-                f'{{"query": "{{ user(id: {i}) {{ id }} }}"}}'
-                for i in range(50)
-            ]) + ']',
         ]
+
+        if include_dos:
+            query_templates.extend([
+                # Nested query DoS
+                '{ users { friends { friends { friends { id } } } } }',
+
+                # Alias-based DoS
+                ' '.join([f'a{i}: user(id: {i}) {{ id }}' for i in range(100)]),
+
+                # Batch queries
+                '[' + ','.join([
+                    f'{{"query": "{{ user(id: {i}) {{ id }} }}"}}'
+                    for i in range(50)
+                ]) + ']',
+            ])
 
         # Add mutations
         mutation_templates = [
@@ -877,9 +930,19 @@ class RESTFuzzer(HTTPFuzzer):
         target: str,
         duration_seconds: int = 60,
         openapi_spec: dict[str, Any] | None = None,
+        auth_header: str | None = None,
+        test_idor: bool = True,
         **kwargs
     ) -> ProtocolFuzzResult:
-        """Fuzz REST API."""
+        """Fuzz REST API.
+
+        Args:
+            target: Base URL of the API
+            duration_seconds: Fuzzing duration
+            openapi_spec: Parsed OpenAPI/Swagger document
+            auth_header: Authorization header value sent with every request
+            test_idor: Attempt IDOR/BOLA access-control probes
+        """
         result = ProtocolFuzzResult(target=target, protocol=self.protocol)
         result.start_time = datetime.utcnow()
 
@@ -902,11 +965,17 @@ class RESTFuzzer(HTTPFuzzer):
             verify=False
         ) as client:
 
-            while (time.time() - start_time) < duration_seconds:
+            while (
+                (time.time() - start_time) < duration_seconds
+                and result.requests_sent < self.config.max_iterations
+            ):
                 endpoint = random.choice(endpoints)
 
                 try:
-                    vuln = await self._fuzz_endpoint(client, target, endpoint, result)
+                    vuln = await self._fuzz_endpoint(
+                        client, target, endpoint, result,
+                        auth_header=auth_header, test_idor=test_idor,
+                    )
                     if vuln:
                         result.vulnerabilities.append(vuln)
 
@@ -941,7 +1010,9 @@ class RESTFuzzer(HTTPFuzzer):
         client: httpx.AsyncClient,
         base_url: str,
         endpoint: dict[str, Any],
-        result: ProtocolFuzzResult
+        result: ProtocolFuzzResult,
+        auth_header: str | None = None,
+        test_idor: bool = True,
     ) -> dict[str, Any] | None:
         """Fuzz a specific REST endpoint."""
         path = endpoint["path"]
@@ -954,14 +1025,20 @@ class RESTFuzzer(HTTPFuzzer):
         url = urllib.parse.urljoin(base_url, path)
         attack = random.choice(ATTACK_STRINGS).decode(errors="ignore")
 
+        request_headers = {"Content-Type": "application/json"}
+        if auth_header:
+            request_headers["Authorization"] = auth_header
+
         # Test IDOR
-        if "{id}" in endpoint["path"] or "id" in path.lower():
+        if test_idor and ("{id}" in endpoint["path"] or "id" in path.lower()):
             # Try accessing other users' resources
             for test_id in ["1", "2", "0", "admin", "../../1"]:
                 test_path = re.sub(r'\d+', test_id, path)
                 test_url = urllib.parse.urljoin(base_url, test_path)
 
-                response = await client.request(method, test_url)
+                response = await client.request(
+                    method, test_url, headers=request_headers
+                )
                 if response.status_code == 200:
                     return {
                         "type": VulnType.AUTH_BYPASS.value,
@@ -971,14 +1048,13 @@ class RESTFuzzer(HTTPFuzzer):
                     }
 
         # Standard request with attack payload
-        headers = {"Content-Type": "application/json"}
         body = json.dumps({"data": attack, "id": attack})
 
         start = time.time()
         response = await client.request(
             method,
             url,
-            headers=headers,
+            headers=request_headers,
             content=body if method in ["POST", "PUT", "PATCH"] else None,
             params={"q": attack} if method == "GET" else None
         )

@@ -131,10 +131,15 @@ class ShmCoverageTracker(CoverageTracker):
             self._attach_shm()
 
     def _attach_shm(self) -> None:
-        """Attach to shared memory segment."""
+        """Create the shared-memory coverage map.
+
+        ``mmap.mmap``'s third positional argument is a flags integer, not a
+        name, so the previous call raised ``TypeError`` on every platform and
+        coverage never attached. An anonymous mapping (``fileno=-1``) is the
+        portable equivalent and matches the AFL shared-memory bitmap model.
+        """
         try:
-            # Create or attach to shared memory
-            self._map = mmap.mmap(-1, self.MAP_SIZE, f"afl_shm_{self.shm_id}")
+            self._map = mmap.mmap(-1, self.MAP_SIZE)
         except Exception as e:
             logger.warning("shm_attach_failed", error=str(e))
 

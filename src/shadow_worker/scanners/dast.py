@@ -52,25 +52,25 @@ class FormParser(HTMLParser):
 
         if tag == "form":
             self._current_form = {
-                "action": attrs_dict.get("action", ""),
-                "method": attrs_dict.get("method", "GET").upper(),
+                "action": attrs_dict.get("action") or "",
+                "method": (attrs_dict.get("method") or "GET").upper(),
                 "inputs": []
             }
 
         elif tag == "input" and self._current_form:
             self._current_form["inputs"].append({
-                "name": attrs_dict.get("name", ""),
-                "type": attrs_dict.get("type", "text"),
-                "value": attrs_dict.get("value", ""),
+                "name": attrs_dict.get("name") or "",
+                "type": attrs_dict.get("type") or "text",
+                "value": attrs_dict.get("value") or "",
             })
 
         elif tag == "a":
-            href = attrs_dict.get("href", "")
+            href = attrs_dict.get("href") or ""
             if href and not href.startswith(("#", "javascript:", "mailto:")):
                 self.links.append(href)
 
         elif tag == "script":
-            src = attrs_dict.get("src", "")
+            src = attrs_dict.get("src") or ""
             if src:
                 self.scripts.append(src)
 

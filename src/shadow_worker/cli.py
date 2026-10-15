@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -515,9 +516,10 @@ def fuzz() -> None:
 @click.argument("target")
 @click.option("--method", "-m", type=click.Choice(["GET", "POST", "PUT", "DELETE", "PATCH"]),
               default="GET", help="HTTP method")
-@click.option("--wordlist", "-w", type=click.Path(exists=True), help="Custom wordlist")
+@click.option("--wordlist", "-w", type=click.Path(exists=True), help="Endpoint wordlist")
 @click.option("--headers", "-H", multiple=True, help="Custom headers (key:value)")
-@click.option("--iterations", "-i", type=int, default=10000, help="Max iterations")
+@click.option("--iterations", "-i", type=int, default=10000, help="Max requests")
+@click.option("--duration", "-d", type=int, default=60, help="Fuzzing duration (seconds)")
 @click.option("--timeout", "-t", type=int, default=5000, help="Request timeout (ms)")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results")
 @click.option("--waf-bypass", is_flag=True, help="Enable WAF bypass techniques")
@@ -530,6 +532,7 @@ async def fuzz_http(
     wordlist: str | None,
     headers: tuple[str, ...],
     iterations: int,
+    duration: int,
     timeout: int,
     output: str | None,
     waf_bypass: bool
@@ -537,12 +540,12 @@ async def fuzz_http(
     """
     Fuzz HTTP endpoints for vulnerabilities.
 
-    TARGET should be a URL with optional FUZZ markers.
+    TARGET is the base URL; its path is used as the default endpoint.
 
     Examples:
-      shadow fuzz http https://api.example.com/users/FUZZ
-      shadow fuzz http https://api.example.com/search?q=FUZZ --method POST
-      shadow fuzz http https://example.com/api/FUZZ --waf-bypass
+      shadow fuzz http https://api.example.com/users
+      shadow fuzz http https://api.example.com --wordlist endpoints.txt --method POST
+      shadow fuzz http https://example.com/api --waf-bypass
     """
     config = ctx.obj["config"]
 
@@ -554,27 +557,43 @@ async def fuzz_http(
         f"[bold]HTTP Fuzzing[/bold]\n"
         f"Target: {target}\n"
         f"Method: {method}\n"
-        f"Iterations: {iterations}",
+        f"Duration: {duration}s\n"
+        f"Max requests: {iterations}",
         border_style="blue"
     ))
 
     # Parse custom headers
-    custom_headers = {}
+    custom_headers: dict[str, str] = {}
     for h in headers:
         if ":" in h:
             key, value = h.split(":", 1)
             custom_headers[key.strip()] = value.strip()
 
-    fuzzer = HTTPFuzzer(
-        base_url=target.rsplit("/", 1)[0] if "/" in target else target,
-        timeout=timeout / 1000
-    )
+    # The engine joins a base URL with endpoint paths, so keep the target's
+    # path as the default endpoint instead of discarding it.
+    parsed = urllib.parse.urlparse(target)
+    if parsed.scheme and parsed.netloc:
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        endpoint = parsed.path or "/"
+        if parsed.query:
+            endpoint = f"{endpoint}?{parsed.query}"
+    else:
+        base_url = target
+        endpoint = "/"
 
-    # Load wordlist if provided
-    payloads = None
+    # A wordlist, when supplied, becomes the set of endpoints to exercise.
+    endpoints: list[str] | None = None
     if wordlist:
         with open(wordlist) as f:
-            payloads = [line.strip() for line in f if line.strip()]
+            endpoints = [line.strip() for line in f if line.strip()] or None
+    if not endpoints:
+        endpoints = [endpoint]
+
+    fuzz_config = FuzzConfig(
+        max_iterations=iterations,
+        input_timeout_ms=timeout,
+    )
+    fuzzer = HTTPFuzzer(fuzz_config)
 
     with Progress(
         SpinnerColumn(),
@@ -583,50 +602,53 @@ async def fuzz_http(
     ) as progress:
         task = progress.add_task("Fuzzing...", total=None)
 
-        results = await fuzzer.fuzz_endpoint(
-            path=target.split("/")[-1] if "/" in target else "/",
+        result = await fuzzer.fuzz(
+            target=base_url,
+            duration_seconds=duration,
+            endpoints=endpoints,
             method=method,
-            payloads=payloads,
-            headers=custom_headers,
+            headers=custom_headers or None,
+            waf_bypass=waf_bypass,
         )
 
         progress.update(task, description="Complete!")
 
+    findings = result.vulnerabilities
+
     # Display results
     table = Table(title="Fuzzing Results")
     table.add_column("Type", style="cyan")
-    table.add_column("Payload", style="yellow")
-    table.add_column("Status", style="green")
+    table.add_column("Severity", style="magenta")
     table.add_column("Evidence", style="red")
 
-    finding_count = 0
-    for finding in results:
+    for finding in findings:
+        evidence = finding.get("pattern_matched") or finding.get("path") or finding.get("url") or ""
         table.add_row(
-            finding.get("type", "unknown"),
-            finding.get("payload", "")[:50],
-            str(finding.get("status_code", "")),
-            finding.get("evidence", "")[:40]
+            str(finding.get("type", "unknown")),
+            str(finding.get("severity", "")),
+            str(evidence)[:40],
         )
-        finding_count += 1
 
     console.print(table)
 
     if output:
-        Path(output).write_text(json.dumps(results, indent=2))
+        Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
         console.print(f"[green]Results saved to {output}[/green]")
 
     console.print(Panel(
         f"[bold]Fuzzing Complete[/bold]\n"
-        f"Total Findings: {finding_count}",
-        border_style="green" if finding_count == 0 else "yellow"
+        f"Requests: {result.requests_sent}\n"
+        f"Findings: {len(findings)}",
+        border_style="green" if not findings else "yellow"
     ))
 
 
 @fuzz.command("graphql")
 @click.argument("endpoint")
-@click.option("--iterations", "-i", type=int, default=5000, help="Max iterations")
+@click.option("--iterations", "-i", type=int, default=5000, help="Max requests")
+@click.option("--duration", "-d", type=int, default=60, help="Fuzzing duration (seconds)")
 @click.option("--introspect/--no-introspect", default=True, help="Run introspection")
-@click.option("--dos-test", is_flag=True, help="Test for DoS vulnerabilities")
+@click.option("--dos-test", is_flag=True, help="Include DoS query templates")
 @click.option("--output", "-o", type=click.Path(), help="Output file")
 @click.pass_context
 @async_command
@@ -634,6 +656,7 @@ async def fuzz_graphql(
     ctx: click.Context,
     endpoint: str,
     iterations: int,
+    duration: int,
     introspect: bool,
     dos_test: bool,
     output: str | None
@@ -654,62 +677,68 @@ async def fuzz_graphql(
     console.print(Panel.fit(
         f"[bold]GraphQL Fuzzing[/bold]\n"
         f"Endpoint: {endpoint}\n"
-        f"Introspection: {introspect}",
+        f"Duration: {duration}s\n"
+        f"Introspection: {introspect}\n"
+        f"DoS templates: {dos_test}",
         border_style="blue"
     ))
 
-    fuzzer = GraphQLFuzzer(endpoint=endpoint)
+    fuzz_config = FuzzConfig(max_iterations=iterations)
+    fuzzer = GraphQLFuzzer(fuzz_config)
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        results = []
+        task = progress.add_task("Fuzzing GraphQL...", total=None)
 
-        if introspect:
-            task = progress.add_task("Running introspection...", total=None)
-            intro_result = await fuzzer.introspect()
-            if intro_result:
-                results.append({"type": "introspection", "data": intro_result})
-            progress.update(task, description="Introspection complete")
+        result = await fuzzer.fuzz(
+            target=endpoint,
+            duration_seconds=duration,
+            introspect=introspect,
+            test_dos=dos_test,
+        )
 
-        task = progress.add_task("Fuzzing queries...", total=None)
-        query_results = await fuzzer.fuzz_queries()
-        results.extend(query_results)
-        progress.update(task, description="Query fuzzing complete")
+        progress.update(task, description="Complete!")
 
-        if dos_test:
-            task = progress.add_task("Testing DoS vectors...", total=None)
-            dos_results = await fuzzer.test_dos()
-            results.extend(dos_results)
-            progress.update(task, description="DoS testing complete")
+    findings = list(result.vulnerabilities)
+    if introspect:
+        findings.extend(result.anomalies)
 
     # Display results
     table = Table(title="GraphQL Fuzzing Results")
     table.add_column("Type", style="cyan")
-    table.add_column("Query", style="yellow")
-    table.add_column("Vulnerability", style="red")
+    table.add_column("Severity", style="magenta")
+    table.add_column("Detail", style="red")
 
-    for finding in results:
-        if isinstance(finding, dict) and finding.get("type") != "introspection":
-            table.add_row(
-                finding.get("type", "unknown"),
-                finding.get("query", "")[:60],
-                finding.get("vulnerability", finding.get("evidence", ""))[:40]
-            )
+    for finding in findings:
+        detail = finding.get("error") or finding.get("description") or finding.get("pattern_matched") or ""
+        table.add_row(
+            str(finding.get("type", "unknown")),
+            str(finding.get("severity", "")),
+            str(detail)[:60],
+        )
 
     console.print(table)
 
     if output:
-        Path(output).write_text(json.dumps(results, indent=2, default=str))
+        Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
         console.print(f"[green]Results saved to {output}[/green]")
+
+    console.print(Panel(
+        f"[bold]Fuzzing Complete[/bold]\n"
+        f"Requests: {result.requests_sent}\n"
+        f"Findings: {len(result.vulnerabilities)}",
+        border_style="green" if not result.vulnerabilities else "yellow"
+    ))
 
 
 @fuzz.command("api")
 @click.argument("spec_file", type=click.Path(exists=True))
 @click.option("--base-url", "-u", required=True, help="Base URL for API")
-@click.option("--iterations", "-i", type=int, default=10000, help="Max iterations")
+@click.option("--iterations", "-i", type=int, default=10000, help="Max requests")
+@click.option("--duration", "-d", type=int, default=60, help="Fuzzing duration (seconds)")
 @click.option("--auth-header", "-a", help="Authorization header value")
 @click.option("--idor-test", is_flag=True, help="Test for IDOR vulnerabilities")
 @click.option("--output", "-o", type=click.Path(), help="Output file")
@@ -720,6 +749,7 @@ async def fuzz_api(
     spec_file: str,
     base_url: str,
     iterations: int,
+    duration: int,
     auth_header: str | None,
     idor_test: bool,
     output: str | None
@@ -740,11 +770,10 @@ async def fuzz_api(
     console.print(Panel.fit(
         f"[bold]REST API Fuzzing[/bold]\n"
         f"Spec: {spec_file}\n"
-        f"Base URL: {base_url}",
+        f"Base URL: {base_url}\n"
+        f"Duration: {duration}s",
         border_style="blue"
     ))
-
-    fuzzer = RESTFuzzer(base_url=base_url)
 
     # Load OpenAPI spec
     with open(spec_file) as f:
@@ -754,50 +783,54 @@ async def fuzz_api(
         else:
             spec = json.load(f)
 
-    fuzzer.load_openapi_spec(spec)
-
-    headers = {}
-    if auth_header:
-        headers["Authorization"] = auth_header
+    fuzz_config = FuzzConfig(max_iterations=iterations)
+    fuzzer = RESTFuzzer(fuzz_config)
 
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        results = []
-
         task = progress.add_task("Fuzzing API endpoints...", total=None)
-        api_results = await fuzzer.fuzz_all_endpoints(headers=headers)
-        results.extend(api_results)
-        progress.update(task, description="Endpoint fuzzing complete")
 
-        if idor_test:
-            task = progress.add_task("Testing for IDOR...", total=None)
-            idor_results = await fuzzer.test_idor(headers=headers)
-            results.extend(idor_results)
-            progress.update(task, description="IDOR testing complete")
+        result = await fuzzer.fuzz(
+            target=base_url,
+            duration_seconds=duration,
+            openapi_spec=spec,
+            auth_header=auth_header,
+            test_idor=idor_test,
+        )
+
+        progress.update(task, description="Complete!")
+
+    findings = result.vulnerabilities
 
     # Display results
     table = Table(title="API Fuzzing Results")
-    table.add_column("Endpoint", style="cyan")
-    table.add_column("Method", style="yellow")
-    table.add_column("Vulnerability", style="red")
+    table.add_column("Type", style="cyan")
     table.add_column("Severity", style="magenta")
+    table.add_column("Detail", style="red")
 
-    for finding in results:
+    for finding in findings:
+        detail = finding.get("url") or finding.get("description") or finding.get("pattern_matched") or ""
         table.add_row(
-            finding.get("endpoint", "")[:40],
-            finding.get("method", ""),
-            finding.get("vulnerability", "")[:30],
-            finding.get("severity", "medium")
+            str(finding.get("type", "unknown")),
+            str(finding.get("severity", "")),
+            str(detail)[:50],
         )
 
     console.print(table)
 
     if output:
-        Path(output).write_text(json.dumps(results, indent=2, default=str))
+        Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
         console.print(f"[green]Results saved to {output}[/green]")
+
+    console.print(Panel(
+        f"[bold]Fuzzing Complete[/bold]\n"
+        f"Requests: {result.requests_sent}\n"
+        f"Findings: {len(findings)}",
+        border_style="green" if not findings else "yellow"
+    ))
 
 
 @fuzz.command("target")
