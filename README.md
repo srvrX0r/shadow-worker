@@ -11,7 +11,7 @@ Shadow Worker is an enterprise-grade security platform for vulnerability scannin
    ___) | | | | (_| | (_| | (_) \ V  V /    \ V  V / (_) | |  |   <  __/ |
   |____/|_| |_|\__,_|\__,_|\___/ \_/\_/      \_/\_/ \___/|_|  |_|\_\___|_|
 
-  Defensive Security Operations Framework v1.0.0
+  Defensive Security Operations Framework v1.1.0
 ```
 
 ## Features
@@ -45,22 +45,21 @@ Shadow Worker is an enterprise-grade security platform for vulnerability scannin
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/shadow-worker/shadow-worker.git
+git clone https://github.com/srvrX0r/shadow-worker.git
 cd shadow-worker
 
-# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 # or: venv\Scripts\activate  # Windows
 
-# Install Shadow Worker
 pip install -e .
 
-# Install optional dependencies
-pip install -e ".[dev]"      # Development tools
-pip install -e ".[web3]"     # Web3/Smart contract analysis
-pip install -e ".[mobile]"   # Mobile security (Frida)
+# Optional extras
+pip install -e ".[dev]"        # pytest, ruff
+pip install -e ".[scanners]"   # semgrep, bandit
+pip install -e ".[detection]"  # yara-python (needs libyara)
+pip install -e ".[web3]"       # smart-contract analysis
+pip install -e ".[mobile]"     # Frida
 ```
 
 ### Configuration
@@ -219,13 +218,33 @@ This tool is designed for **authorized security testing only**:
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+GNU Affero General Public License v3. See [LICENSE](LICENSE).
+
+The package metadata, this README, and `LICENSE` all describe AGPL-3.0-only. Earlier drafts mentioned MIT and Apache; those claims were incorrect.
+
+## CI/CD
+
+GitHub Actions on `main` and pull requests:
+
+- tests on Python 3.10, 3.11, and 3.12
+- Ruff
+- wheel build and `shadow --help` smoke
+- container image build (no push)
+
+Tag `v*` publishes a GitHub Release with the sdist and wheel, and pushes the image to `ghcr.io/srvrx0r/shadow-worker`.
+
+```bash
+docker build -t shadow-worker:1.1.0 .
+docker run --rm shadow-worker:1.1.0 --version
+```
+
+The runtime image is non-root, does not shell out to a package manager, and healthchecks with `shadow --help`. Semgrep, Bandit, and YARA stay optional so the default image stays installable without native libraries. Mount a config and install the extras in a derived image when you need them.
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines and code of conduct before submitting pull requests.
+Open a pull request against `main`. CI must be green. See [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
 ## Support
 
 - Documentation: [docs/](docs/)
-- Issues: [GitHub Issues](https://github.com/shadow-worker/shadow-worker/issues)
+- Issues: [GitHub Issues](https://github.com/srvrX0r/shadow-worker/issues)

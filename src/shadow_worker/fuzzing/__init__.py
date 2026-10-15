@@ -6,10 +6,11 @@ all platforms, protocols, and input formats.
 """
 
 from shadow_worker.fuzzing.engine import (
-    FuzzEngine,
     FuzzConfig,
+    FuzzEngine,
     FuzzResult,
     FuzzSession,
+    FuzzStrategy,
 )
 from shadow_worker.fuzzing.mutators import (
     Mutator,
@@ -60,6 +61,7 @@ __all__ = [
     "FuzzConfig",
     "FuzzResult",
     "FuzzSession",
+    "FuzzStrategy",
     # Mutators
     "Mutator",
     "BitFlipMutator",

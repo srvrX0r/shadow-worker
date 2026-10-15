@@ -16,9 +16,49 @@ from uuid import UUID, uuid4
 import structlog
 from asyncio_throttle import Throttler
 
-from shadow_worker.core.config import ShadowConfig, TargetConfig
+from shadow_worker.core.config import ShadowConfig
 
 logger = structlog.get_logger()
+
+
+def host_authorized(host: str, domains: list[str]) -> bool:
+    """Return True when host is exactly an authorized domain or a subdomain of one.
+
+    A bare suffix check is not safe: ``notexample.com`` endswith ``example.com``.
+    Empty domain entries are ignored so a blank allowlist item cannot match every host.
+    """
+    normalized = host.lower().strip().rstrip(".")
+    if not normalized:
+        return False
+    for domain in domains:
+        allowed = domain.lower().strip().rstrip(".")
+        if not allowed:
+            continue
+        if normalized == allowed or normalized.endswith("." + allowed):
+            return True
+    return False
+
+
+def host_listed(host: str, hosts: list[str]) -> bool:
+    """Match a host against the explicit host allowlist, including IP equality."""
+    import ipaddress
+
+    normalized = host.lower().strip()
+    for item in hosts:
+        candidate = item.strip()
+        if candidate.lower() == normalized:
+            return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    for item in hosts:
+        try:
+            if ipaddress.ip_address(item.strip()) == ip:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 class ScanStatus(str, Enum):
@@ -189,18 +229,17 @@ class ScanTarget:
 
         if self.raw.startswith(("http://", "https://")):
             return "url"
-        elif re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", self.raw):
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", self.raw):
             return "ip"
-        elif "/" in self.raw and any(c.isdigit() for c in self.raw.split("/")[-1]):
+        if "/" in self.raw and any(c.isdigit() for c in self.raw.split("/")[-1]):
             return "cidr"
-        elif self.raw.startswith("/") or self.raw.startswith("./"):
+        if self.raw == "." or self.raw.startswith(("/", "./", "../")):
             return "path"
-        elif "@" in self.raw and ":" in self.raw:
+        if "@" in self.raw and ":" in self.raw:
             return "git"
-        elif "." in self.raw:
+        if "." in self.raw and " " not in self.raw:
             return "domain"
-        else:
-            return "unknown"
+        return "unknown"
 
     def _validate(self) -> None:
         """Validate the target."""
@@ -309,37 +348,59 @@ class Scanner:
         return result
 
     def _validate_target_authorized(self, target: ScanTarget) -> None:
-        """Verify target is in the authorized list."""
+        """Verify a network target is inside the configured allowlist.
+
+        Local filesystem paths are operator-owned and do not require an allowlist.
+        Every network target type fails closed, including CIDR ranges and names
+        that could not be classified.
+        """
+        from pathlib import Path
+
         targets = self.config.targets
 
-        # Check against authorized lists
+        if target.target_type == "path":
+            return
+
         if target.target_type == "ip":
-            if target.raw not in targets.hosts:
-                # Check if it's in any authorized network
-                import ipaddress
-                ip = ipaddress.ip_address(target.raw)
-                for network in targets.networks:
-                    if ip in ipaddress.ip_network(network, strict=False):
-                        return
-                raise PermissionError(f"Target IP not authorized: {target.raw}")
+            if host_listed(target.raw, targets.hosts):
+                return
+            import ipaddress
+            ip = ipaddress.ip_address(target.raw)
+            for network in targets.networks:
+                if ip in ipaddress.ip_network(network, strict=False):
+                    return
+            raise PermissionError(f"Target IP not authorized: {target.raw}")
 
-        elif target.target_type == "domain":
-            if not any(target.raw.endswith(d) for d in targets.domains):
-                raise PermissionError(f"Target domain not authorized: {target.raw}")
+        if target.target_type == "domain":
+            if host_authorized(target.raw, targets.domains) or host_listed(target.raw, targets.hosts):
+                return
+            raise PermissionError(f"Target domain not authorized: {target.raw}")
 
-        elif target.target_type == "url":
+        if target.target_type == "url":
             from urllib.parse import urlparse
-            host = urlparse(target.raw).netloc.split(":")[0]
-            if not any(host.endswith(d) for d in targets.domains) and host not in targets.hosts:
-                raise PermissionError(f"Target URL host not authorized: {host}")
+            host = urlparse(target.raw).hostname or ""
+            if host_authorized(host, targets.domains) or host_listed(host, targets.hosts):
+                return
+            raise PermissionError(f"Target URL host not authorized: {host}")
 
-        elif target.target_type == "path":
-            # Local paths are allowed (scanning your own code)
-            pass
+        if target.target_type == "cidr":
+            import ipaddress
+            network = ipaddress.ip_network(target.raw, strict=False)
+            for allowed in targets.networks:
+                allowed_net = ipaddress.ip_network(allowed, strict=False)
+                if network.subnet_of(allowed_net):
+                    return
+            raise PermissionError(f"Target network is not inside an authorized range: {target.raw}")
 
-        elif target.target_type == "git":
-            if target.raw not in targets.repositories:
-                raise PermissionError(f"Repository not authorized: {target.raw}")
+        if target.target_type == "git":
+            if target.raw in targets.repositories:
+                return
+            raise PermissionError(f"Repository not authorized: {target.raw}")
+
+        # Unclassified names are local scans only when the path actually exists.
+        if Path(target.raw).exists():
+            return
+        raise PermissionError(f"Target is not an authorized host, domain, or local path: {target.raw}")
 
     async def _run_sast_scan(
         self,

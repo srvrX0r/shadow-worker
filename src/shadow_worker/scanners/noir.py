@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path

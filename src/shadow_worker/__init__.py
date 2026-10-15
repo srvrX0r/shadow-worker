@@ -14,8 +14,8 @@ Features:
 - Real-time alerting and reporting
 """
 
-__version__ = "1.0.0"
-__author__ = "Security Operations"
+__version__ = "1.1.0"
+__author__ = "Rodrigo Coll"
 
 from shadow_worker.core.engine import ShadowEngine
 from shadow_worker.core.config import ShadowConfig

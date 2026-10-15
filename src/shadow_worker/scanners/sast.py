@@ -63,6 +63,23 @@ class SASTScanner:
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
 
+    def _semgrep_argv(self, target: Path) -> list[str]:
+        """Build a Semgrep argv. Never interpolated into a shell."""
+        argv = ["semgrep", "--json", "--quiet"]
+        for rule in self.config.semgrep_rules:
+            argv.extend(["--config", rule])
+        for pattern in self.config.exclude_patterns:
+            argv.extend(["--exclude", pattern])
+        argv.append(str(target))
+        return argv
+
+    def _bandit_argv(self, target: Path) -> list[str]:
+        """Build a Bandit argv. Never interpolated into a shell."""
+        argv = ["bandit", "-r", str(target), "-f", "json"]
+        if self.config.exclude_patterns:
+            argv.extend(["--exclude", ",".join(self.config.exclude_patterns)])
+        return argv
+
     async def scan(self, target: str, options: dict[str, Any] | None = None) -> list[Finding]:
         """
         Run SAST scan on target path.
@@ -110,15 +127,12 @@ class SASTScanner:
         findings = []
 
         try:
-            rules = " ".join(f"--config {r}" for r in self.config.semgrep_rules)
-            excludes = " ".join(f"--exclude '{p}'" for p in self.config.exclude_patterns)
+            argv = self._semgrep_argv(target)
 
-            cmd = f"semgrep {rules} {excludes} --json {target}"
-
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
 
@@ -137,13 +151,12 @@ class SASTScanner:
         findings = []
 
         try:
-            excludes = ",".join(self.config.exclude_patterns)
-            cmd = f"bandit -r {target} -f json --exclude {excludes}"
+            argv = self._bandit_argv(target)
 
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
 

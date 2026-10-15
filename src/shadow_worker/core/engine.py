@@ -377,14 +377,23 @@ class ShadowEngine:
         return finding_idx >= threshold_idx
 
     def _setup_signal_handlers(self) -> None:
-        """Setup signal handlers for graceful shutdown."""
-        loop = asyncio.get_event_loop()
+        """Install graceful-shutdown handlers when the running loop allows it.
+
+        ``add_signal_handler`` is main-thread and Unix-only. A scanner embedded
+        in a worker thread, or running under a platform without the API, must
+        still start.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("signal_handler_skipped", reason="no_running_loop")
+            return
 
         for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig,
-                lambda: asyncio.create_task(self._handle_shutdown())
-            )
+            try:
+                loop.add_signal_handler(sig, lambda: asyncio.create_task(self._handle_shutdown()))
+            except (NotImplementedError, RuntimeError) as exc:
+                logger.debug("signal_handler_skipped", signal=getattr(sig, "name", str(sig)), error=str(exc))
 
     async def _handle_shutdown(self) -> None:
         """Handle shutdown signal."""
