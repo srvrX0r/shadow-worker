@@ -27,7 +27,7 @@ LABEL org.opencontainers.image.title="shadow-worker" \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /usr/sbin/nologin --uid 10001 shadow \
+    && useradd --create-home --shell /usr/sbin/nologin --uid 10001 --user-group shadowworker \
     && mkdir -p /var/lib/shadow-worker /config
 
 COPY --from=builder /wheels /wheels
@@ -35,12 +35,12 @@ RUN pip install --upgrade pip \
     && pip install /wheels/*.whl \
     && rm -rf /wheels
 
-COPY --chown=shadow:shadow rules /var/lib/shadow-worker/rules
+COPY --chown=shadowworker:shadowworker rules /var/lib/shadow-worker/rules
 
 WORKDIR /var/lib/shadow-worker
-RUN chown -R shadow:shadow /var/lib/shadow-worker /config
+RUN chown -R shadowworker:shadowworker /var/lib/shadow-worker /config
 
-USER shadow
+USER shadowworker
 
 ENTRYPOINT ["shadow"]
 CMD ["--help"]
