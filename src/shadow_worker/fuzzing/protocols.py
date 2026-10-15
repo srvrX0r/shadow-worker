@@ -370,9 +370,15 @@ class HTTPFuzzer(ProtocolFuzzer):
         request_headers = dict(headers or {})
         request_headers["Content-Type"] = content_type
 
+        # GET/HEAD do not carry meaningful request bodies, so fall back to
+        # POST for body fuzzing while honouring explicit write methods.
+        request_method = method
+        if request_method.upper() in ("GET", "HEAD"):
+            request_method = "POST"
+
         start = time.time()
         response = await client.request(
-            method, url, content=body, headers=request_headers
+            request_method, url, content=body, headers=request_headers
         )
         elapsed = (time.time() - start) * 1000
 
