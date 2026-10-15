@@ -232,6 +232,46 @@ Shadow Worker Configuration
 
 ---
 
+### `shadow fuzz`
+
+Advanced protocol and target fuzzing. Every subcommand requires
+`authorization_confirmed: true` and only touches authorized targets.
+
+```bash
+# Fuzz HTTP endpoints (the target path becomes the default endpoint)
+shadow fuzz http https://api.example.com/users --duration 30 --iterations 5000
+
+# Fuzz a GraphQL endpoint
+shadow fuzz graphql https://api.example.com/graphql --no-introspect
+
+# Fuzz a REST API described by an OpenAPI/Swagger document
+shadow fuzz api ./openapi.json --base-url https://api.example.com --idor-test
+
+# Fuzz a Python function or module
+shadow fuzz target mymodule:parse_data --strategy coverage --iterations 100000
+
+# Fuzz a network protocol (AFLNet-style)
+shadow fuzz network 192.168.1.100 21 --protocol tcp
+```
+
+**Common options**:
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--iterations` | `-i` | Maximum requests/executions |
+| `--duration` | `-d` | Fuzzing duration in seconds |
+| `--output` | `-o` | Write results to a file |
+
+Protocol-specific options:
+
+- `shadow fuzz http`: `--method`, `--headers key:value`, `--wordlist`
+  (endpoint list), `--waf-bypass`
+- `shadow fuzz graphql`: `--introspect/--no-introspect`, `--dos-test`
+- `shadow fuzz api`: `--auth-header`, `--idor-test`
+
+---
+
+
 ## Global Options
 
 Available for all commands:
