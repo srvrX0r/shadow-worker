@@ -3,6 +3,14 @@
 How Shadow Worker is built, scanned, and released, and what the repository
 ruleset requires before a pull request can merge into `main`.
 
+> **Pending application.** `codeql.yml` and the reworked `ci.yml` /
+> `release.yml` are not on `main` yet. GitHub refuses automation pushes that
+> touch `.github/workflows/` unless the pushing GitHub App holds the
+> **Workflows** permission, and this repository has no CodeQL results yet.
+> The ready-to-apply diff lives in `docs/patches/0001-ci-workflows.patch` on tag
+> `handoff-ci-cd-hardening-1.2.0` (see issue #9). Remove this note once the
+> workflows are on `main`.
+
 ## Workflows
 
 | Workflow | File | Trigger | What it does |
