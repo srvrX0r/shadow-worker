@@ -11,11 +11,11 @@ Apply the pending pipeline changes with:
 # from the repository root, on a clean checkout of main
 git apply --index docs/patches/0001-ci-workflows.patch
 git rm -r --cached docs/patches && rm -rf docs/patches
-git commit -m "ci: add CodeQL scanning, extend matrix, dependency review, container smoke test"
+git commit -m "ci: activate CodeQL, 3.10-3.14 matrix, dependency review and container gate"
 git push origin HEAD:refs/heads/ci-cd-workflows
 ```
 
-That commit:
+The patch is a complete, ready-to-land change:
 
 - adds `.github/workflows/codeql.yml` and `.github/codeql/codeql-config.yml`
   (CodeQL on pull request, push to `main`, weekly, and manual dispatch), which is
@@ -28,8 +28,9 @@ That commit:
 - bumps `docker/login-action` v4, `docker/build-push-action` v7,
   `actions/upload-artifact` v7, `actions/download-artifact` v8, verifies the
   wheel installs before publishing, adds provenance, and scopes permissions per
-  job.
+  job;
+- drops the "pending application" notes from `README.md` and `docs/CI_CD.md`.
 
-The three files pass `actionlint` 1.7.12 with the `shellcheck` and `pyflakes`
-rules enabled. Once this commit is on `main`, delete this directory and the
+The workflow files pass `actionlint` 1.7.12 with the `shellcheck` and `pyflakes`
+rules enabled. Once this patch is on `main`, delete this directory and the
 `handoff-ci-cd-hardening-1.2.0` tag.

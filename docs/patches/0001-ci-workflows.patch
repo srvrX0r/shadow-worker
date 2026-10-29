@@ -226,3 +226,37 @@ index 06b28c7..8bb1b15 100644
          with:
            name: dist
            path: dist
+diff --git a/README.md b/README.md
+index 1dece99..dd809b2 100644
+--- a/README.md
++++ b/README.md
+@@ -240,10 +240,6 @@ Every pull request and every push to `main` runs:
+ - container image build plus a runtime smoke test (non-root uid, baked rules,
+   writable data dir, declared healthcheck)
+ 
+-> The CodeQL, dependency-review, and container smoke-test steps are defined in
+-> `.github/workflows/` and are pending application — see
+-> [docs/CI_CD.md](docs/CI_CD.md#ci-cd-guide) for the current status.
+-
+ Tag `v*` publishes a GitHub Release with the sdist and wheel, and pushes the
+ image to `ghcr.io/srvrx0r/shadow-worker` with provenance.
+ 
+diff --git a/docs/CI_CD.md b/docs/CI_CD.md
+index 71785cf..82cbbf5 100644
+--- a/docs/CI_CD.md
++++ b/docs/CI_CD.md
+@@ -3,14 +3,6 @@
+ How Shadow Worker is built, scanned, and released, and what the repository
+ ruleset requires before a pull request can merge into `main`.
+ 
+-> **Pending application.** `codeql.yml` and the reworked `ci.yml` /
+-> `release.yml` are not on `main` yet. GitHub refuses automation pushes that
+-> touch `.github/workflows/` unless the pushing GitHub App holds the
+-> **Workflows** permission, and this repository has no CodeQL results yet.
+-> The ready-to-apply diff lives in `docs/patches/0001-ci-workflows.patch` on tag
+-> `handoff-ci-cd-hardening-1.2.0` (see issue #9). Remove this note once the
+-> workflows are on `main`.
+-
+ ## Workflows
+ 
+ | Workflow | File | Trigger | What it does |
