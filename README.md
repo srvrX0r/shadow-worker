@@ -240,6 +240,10 @@ Every pull request and every push to `main` runs:
 - container image build plus a runtime smoke test (non-root uid, baked rules,
   writable data dir, declared healthcheck)
 
+> The CodeQL, dependency-review, and container smoke-test steps are defined in
+> `.github/workflows/` and are pending application — see
+> [docs/CI_CD.md](docs/CI_CD.md#ci-cd-guide) for the current status.
+
 Tag `v*` publishes a GitHub Release with the sdist and wheel, and pushes the
 image to `ghcr.io/srvrx0r/shadow-worker` with provenance.
 
