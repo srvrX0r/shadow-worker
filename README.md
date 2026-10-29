@@ -11,7 +11,7 @@ Shadow Worker is an enterprise-grade security platform for vulnerability scannin
    ___) | | | | (_| | (_| | (_) \ V  V /    \ V  V / (_) | |  |   <  __/ |
   |____/|_| |_|\__,_|\__,_|\___/ \_/\_/      \_/\_/ \___/|_|  |_|\_\___|_|
 
-  Defensive Security Operations Framework v1.1.0
+  Defensive Security Operations Framework v1.2.0
 ```
 
 ## Features
@@ -33,6 +33,11 @@ Shadow Worker is an enterprise-grade security platform for vulnerability scannin
 - **Suricata Integration** - Network-based intrusion detection
 - **Custom Rules** - YAML-based detection patterns
 - **File Scanning** - Binary analysis and hash checking
+
+### Fuzzing
+- **Protocol Fuzzers** - HTTP, GraphQL, REST/OpenAPI, and raw network targets
+- **Coverage Guidance** - Python target fuzzing with coverage feedback
+- **Triage** - Deduplicates crashes and classifies findings
 
 ### Alerting & Reporting
 - **Multi-Channel** - Slack, Discord, Email, PagerDuty, Webhooks
@@ -108,6 +113,7 @@ shadow status
 | `shadow scan <target>` | Run security scan against target |
 | `shadow discover <path>` | Discover API endpoints from source code |
 | `shadow detect <path>` | Scan files for threats with YARA |
+| `shadow fuzz <protocol>` | Fuzz HTTP, GraphQL, REST, network, or Python targets |
 | `shadow monitor` | Continuous monitoring mode |
 | `shadow status` | Show configuration and status |
 
@@ -224,21 +230,35 @@ The package metadata, this README, and `LICENSE` all describe AGPL-3.0-only. Ear
 
 ## CI/CD
 
-GitHub Actions on `main` and pull requests:
+Every pull request and every push to `main` runs:
 
-- tests on Python 3.10, 3.11, and 3.12
+- tests on Python 3.10, 3.11, 3.12, 3.13, and 3.14
 - Ruff
-- wheel build and `shadow --help` smoke
-- container image build (no push)
+- wheel build, install check, and `shadow --help` smoke
+- CodeQL analysis uploaded to code scanning (also run weekly)
+- dependency review of new or bumped packages
+- container image build plus a runtime smoke test (non-root uid, baked rules,
+  writable data dir, declared healthcheck)
 
-Tag `v*` publishes a GitHub Release with the sdist and wheel, and pushes the image to `ghcr.io/srvrx0r/shadow-worker`.
+Tag `v*` publishes a GitHub Release with the sdist and wheel, and pushes the
+image to `ghcr.io/srvrx0r/shadow-worker` with provenance.
 
 ```bash
-docker build -t shadow-worker:1.1.0 .
-docker run --rm shadow-worker:1.1.0 --version
+docker build -t shadow-worker:1.2.0 .
+docker run --rm shadow-worker:1.2.0 --version
+
+# or with compose (read-only rootfs, non-root user, mounted rules)
+docker compose run --rm shadow-worker status
 ```
 
-The runtime image is non-root, does not shell out to a package manager, and healthchecks with `shadow --help`. Semgrep, Bandit, and YARA stay optional so the default image stays installable without native libraries. Mount a config and install the extras in a derived image when you need them.
+The runtime image is non-root, does not shell out to a package manager, and
+healthchecks with `shadow --help`. Semgrep, Bandit, and YARA stay optional so
+the default image stays installable without native libraries. Mount a config and
+install the extras in a derived image when you need them.
+
+See [docs/CI_CD.md](docs/CI_CD.md) for the job-by-job breakdown, the merge
+protection rules that gate `main`, and how to run the same gates locally
+(`make ci`, `make docker-test`).
 
 ## Contributing
 

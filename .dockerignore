@@ -1,5 +1,6 @@
 .git
 .github
+.cline-home
 .venv
 venv
 tests
@@ -16,3 +17,8 @@ shadow-config.yaml
 dist
 build
 *.egg-info
+docs
+*.sarif
+results
+reports
+docker-compose.yml

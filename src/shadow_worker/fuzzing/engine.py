@@ -244,18 +244,37 @@ class Corpus:
     coverage_map: dict[str, FuzzInput] = field(default_factory=dict)
     size_limit: int = 10000
 
+    @staticmethod
+    def _key_for(input: FuzzInput) -> str:
+        """Return the deduplication key for an input.
+
+        Instrumented inputs are keyed by their coverage signature so that
+        duplicate coverage is rejected. Seeds without instrumentation (for
+        example user-supplied corpora or the built-in default seed) are keyed
+        by content hash so they are retained but still deduplicated.
+        """
+        return input.coverage_hash or f"seed:{input.hash}"
+
     def add(self, input: FuzzInput) -> bool:
-        """Add input to corpus if it provides new coverage."""
-        if input.coverage_hash and input.coverage_hash not in self.coverage_map:
-            self.coverage_map[input.coverage_hash] = input
-            self.inputs.append(input)
+        """Add an input to the corpus.
 
-            # Enforce size limit
-            if len(self.inputs) > self.size_limit:
-                self._minimize()
+        Inputs that provide new coverage are retained, and so are seeds that
+        have not been executed yet (they have no coverage hash). Rejecting
+        hashless inputs previously discarded every user-supplied seed and the
+        default seed, leaving the corpus empty.
+        """
+        key = self._key_for(input)
+        if key in self.coverage_map:
+            return False
 
-            return True
-        return False
+        self.coverage_map[key] = input
+        self.inputs.append(input)
+
+        # Enforce size limit
+        if len(self.inputs) > self.size_limit:
+            self._minimize()
+
+        return True
 
     def get_random(self) -> FuzzInput | None:
         """Get random input from corpus."""
@@ -286,9 +305,8 @@ class Corpus:
 
         # Rebuild coverage map
         self.coverage_map = {
-            inp.coverage_hash: inp
+            self._key_for(inp): inp
             for inp in self.inputs
-            if inp.coverage_hash
         }
 
     def save(self, path: Path) -> None:

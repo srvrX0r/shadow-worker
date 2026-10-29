@@ -21,6 +21,55 @@ class TestShadowConfig:
         assert config.sast.enabled is True
         assert config.dast.enabled is True
 
+    def test_load_from_env_honors_data_dir(self, tmp_path, monkeypatch):
+        """SHADOW_DATA_DIR must override the file/default data directory.
+
+        The container image relies on this to write into a mounted volume.
+        """
+        config_file = tmp_path / "shadow-config.yaml"
+        config_file.write_text("name: from-file\ndata_dir: ./data\n")
+        monkeypatch.setenv("SHADOW_CONFIG", str(config_file))
+        monkeypatch.setenv("SHADOW_DATA_DIR", "/var/lib/shadow-worker/data")
+
+        config = ShadowConfig.load_from_env()
+
+        assert config.name == "from-file"
+        assert config.data_dir == "/var/lib/shadow-worker/data"
+
+    def test_load_from_env_honors_log_level(self, tmp_path, monkeypatch):
+        """SHADOW_LOG_LEVEL is normalized to the allowed enum values."""
+        config_file = tmp_path / "shadow-config.yaml"
+        config_file.write_text("name: from-file\n")
+        monkeypatch.setenv("SHADOW_CONFIG", str(config_file))
+        monkeypatch.setenv("SHADOW_LOG_LEVEL", "debug")
+
+        config = ShadowConfig.load_from_env()
+
+        assert config.log_level == "DEBUG"
+
+    def test_load_from_env_ignores_invalid_log_level(self, tmp_path, monkeypatch):
+        """An unusable SHADOW_LOG_LEVEL must not break startup."""
+        config_file = tmp_path / "shadow-config.yaml"
+        config_file.write_text("name: from-file\n")
+        monkeypatch.setenv("SHADOW_CONFIG", str(config_file))
+        monkeypatch.setenv("SHADOW_LOG_LEVEL", "verbose")
+
+        config = ShadowConfig.load_from_env()
+
+        assert config.log_level == "INFO"
+
+    def test_load_from_env_without_config_file(self, tmp_path, monkeypatch):
+        """Missing config files fall back to defaults, not an exception."""
+        monkeypatch.setenv("SHADOW_CONFIG", str(tmp_path / "missing.yaml"))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("SHADOW_DATA_DIR", raising=False)
+        monkeypatch.delenv("SHADOW_LOG_LEVEL", raising=False)
+
+        config = ShadowConfig.load_from_env()
+
+        assert config.name == "shadow-worker"
+        assert config.data_dir == "./data"
+
     def test_authorization_validation(self):
         """Test that authorization must be confirmed."""
         config = ShadowConfig()

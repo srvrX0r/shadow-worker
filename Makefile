@@ -1,7 +1,12 @@
 # Shadow Worker - Makefile
 # Defensive Security Operations Framework
 
-.PHONY: help install dev test lint format clean run scan ci docker-build
+VERSION ?= 1.2.0
+IMAGE ?= shadow-worker:$(VERSION)
+PYTHON ?= python3
+
+.PHONY: help install dev test lint format clean run scan ci docker-build docker-run \
+        docker-test docker-scan compose-up compose-down
 
 # Default target
 help:
@@ -19,6 +24,14 @@ help:
 	@echo "  lint         Run ruff"
 	@echo "  ci           Lint and test (same gates as GitHub Actions)"
 	@echo "  typecheck    Run type checker"
+	@echo ""
+	@echo "Container:"
+	@echo "  docker-build Build $(IMAGE)"
+	@echo "  docker-test  Build and smoke test the image (non-root, rules, healthcheck)"
+	@echo "  docker-run   Run the image help"
+	@echo "  docker-scan  Run a SAST scan of the working tree inside the image"
+	@echo "  compose-up   Bring the compose service up"
+	@echo "  compose-down Stop the compose service"
 	@echo ""
 	@echo "Usage:"
 	@echo "  status       Show configuration status"
@@ -95,10 +108,29 @@ clean:
 
 # Container
 docker-build:
-	docker build -t shadow-worker:1.1.0 .
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE) .
 
 docker-run:
-	docker run --rm shadow-worker:1.1.0 --help
+	docker run --rm $(IMAGE) --help
+
+# Mirrors the docker smoke test in .github/workflows/ci.yml
+docker-test: docker-build
+	docker run --rm $(IMAGE) --version
+	docker run --rm $(IMAGE) --help > /dev/null
+	docker run --rm $(IMAGE) status > /dev/null
+	@test "$$(docker run --rm --entrypoint python $(IMAGE) -c 'import os; print(os.getuid())')" = "10001"
+	docker run --rm --entrypoint python $(IMAGE) -c 'import pathlib; assert list(pathlib.Path("rules").rglob("*.yar"))'
+	docker inspect --format '{{json .Config.Healthcheck}}' $(IMAGE) | grep -q 'shadow --help'
+	@echo "Container image $(IMAGE) passed smoke tests"
+
+docker-scan: docker-build
+	docker run --rm -v $(CURDIR):/workspace:ro $(IMAGE) scan /workspace --type sast
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down
 
 # Documentation
 docs:
@@ -106,3 +138,4 @@ docs:
 	@echo "  - INSTALLATION.md"
 	@echo "  - CLI_GUIDE.md"
 	@echo "  - API_REFERENCE.md"
+	@echo "  - CI_CD.md"

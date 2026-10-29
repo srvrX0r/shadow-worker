@@ -221,20 +221,36 @@ class ShadowConfig(BaseModel):
 
     @classmethod
     def load_from_env(cls) -> ShadowConfig:
-        """Load configuration from environment or default locations."""
+        """Load configuration from environment or default locations.
+
+        Environment variables win over file values so the container image can
+        point the data directory at a mounted volume without editing config.
+        """
         config_path = os.environ.get("SHADOW_CONFIG", "shadow-config.yaml")
 
+        config: ShadowConfig | None = None
         if Path(config_path).exists():
-            return cls.load(config_path)
+            config = cls.load(config_path)
+        else:
+            # Check common locations
+            for location in ["./shadow-config.yaml", "~/.shadow-worker/config.yaml", "/etc/shadow-worker/config.yaml"]:
+                expanded = Path(location).expanduser()
+                if expanded.exists():
+                    config = cls.load(expanded)
+                    break
 
-        # Check common locations
-        for location in ["./shadow-config.yaml", "~/.shadow-worker/config.yaml", "/etc/shadow-worker/config.yaml"]:
-            expanded = Path(location).expanduser()
-            if expanded.exists():
-                return cls.load(expanded)
+        if config is None:
+            config = cls()
 
-        # Return default config
-        return cls()
+        data_dir = os.environ.get("SHADOW_DATA_DIR")
+        if data_dir:
+            config.data_dir = data_dir
+
+        log_level = os.environ.get("SHADOW_LOG_LEVEL")
+        if log_level and log_level.upper() in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            config.log_level = log_level.upper()  # type: ignore[assignment]
+
+        return config
 
     def save(self, path: str | Path) -> None:
         """Save configuration to YAML file."""

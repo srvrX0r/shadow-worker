@@ -36,12 +36,37 @@ source venv/bin/activate  # Linux/macOS
 pip install -e .
 ```
 
-### Method 3: Docker (Coming Soon)
+### Method 3: Docker
+
+Build the image locally (or pull the published one from GHCR):
 
 ```bash
-docker pull shadowworker/shadow-worker:latest
-docker run -v $(pwd)/config:/config shadowworker/shadow-worker scan https://target.com
+docker build -t shadow-worker:1.2.0 .
+docker run --rm shadow-worker:1.2.0 --version
 ```
+
+Run a scan with your configuration mounted read-only:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/shadow-config.yaml:/config/shadow-config.yaml:ro" \
+  -v "$(pwd)/rules:/var/lib/shadow-worker/rules:ro" \
+  -v shadow-data:/var/lib/shadow-worker/data \
+  shadow-worker:1.2.0 scan https://your-app.example.com
+```
+
+Or use compose, which already runs the container as the non-root uid `10001`
+with a read-only root filesystem:
+
+```bash
+docker compose run --rm shadow-worker status
+docker compose run --rm shadow-worker scan ./project --type sast
+```
+
+Published images are `ghcr.io/srvrx0r/shadow-worker` (tagged by release
+version and commit sha). The image healthchecks with `shadow --help`; set
+`SHADOW_CONFIG` and `SHADOW_DATA_DIR` to relocate the configuration file and the
+data volume.
 
 ## Optional Dependencies
 

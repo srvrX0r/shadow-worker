@@ -5,11 +5,31 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One pull request for minor/patch updates; majors stay separate so they
+      # can be reviewed (and the container base bumped) on their own.
+      python-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
   - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: weekly
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "docker"

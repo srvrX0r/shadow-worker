@@ -1,0 +1,47 @@
+# Shadow Worker - container composition
+#
+#   docker compose build
+#   docker compose run --rm shadow-worker --version
+#   docker compose run --rm shadow-worker status
+#
+# The example config is mounted read-only so the stack runs out of the box.
+# Swap in your own authorized configuration before running scans:
+#
+#   cp shadow-config.example.yaml shadow-config.yaml   # add your targets
+#   # then change the config mount below to ./shadow-config.yaml
+
+services:
+  shadow-worker:
+    build:
+      context: .
+      args:
+        VERSION: "1.2.0"
+    image: shadow-worker:1.2.0
+    container_name: shadow-worker
+    command: ["status"]
+
+    # Matches the Dockerfile: non-root, no privilege escalation, read-only root.
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      SHADOW_CONFIG: /config/shadow-config.yaml
+      SHADOW_DATA_DIR: /var/lib/shadow-worker/data
+
+    volumes:
+      - ./shadow-config.example.yaml:/config/shadow-config.yaml:ro
+      - ./rules:/var/lib/shadow-worker/rules:ro
+      - shadow-data:/var/lib/shadow-worker/data
+      - ./reports:/var/lib/shadow-worker/reports
+
+    tmpfs:
+      - /tmp
+
+    restart: unless-stopped
+
+volumes:
+  shadow-data:

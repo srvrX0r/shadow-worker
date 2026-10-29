@@ -1,0 +1,11 @@
+name: "Shadow Worker CodeQL config"
+
+# The repository ruleset blocks a merge on *any* CodeQL alert
+# (code_scanning rule, tool CodeQL, threshold "all"), so this stays on the
+# default security suite. Escalate to `security-extended` in a follow-up once
+# main has a clean baseline, so the stricter suite does not freeze merges.
+paths:
+  - src
+
+paths-ignore:
+  - src/shadow_worker/**/__pycache__
